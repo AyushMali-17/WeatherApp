@@ -4,16 +4,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Weather Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.5.0/css/ol.css">
+    <script src="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.5.0/build/ol.js"></script>
     <style>
+        :root {
+            --bg-color: #f0f0f0;
+            --text-color: #333;
+            --card-bg: white;
+            --button-bg: #4CAF50;
+            --button-text: white;
+        }
+        .dark-mode {
+            --bg-color: #333;
+            --text-color: #f0f0f0;
+            --card-bg: #444;
+            --button-bg: #45a049;
+            --button-text: #f0f0f0;
+        }
         body {
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            background-color: #f0f0f0;
-            color: #333;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
         }
         .container {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
         }
@@ -24,6 +41,7 @@
             display: flex;
             justify-content: center;
             margin-bottom: 20px;
+            flex-wrap: wrap;
         }
         #city-input {
             padding: 10px;
@@ -32,11 +50,11 @@
             border: 1px solid #ddd;
             border-radius: 4px 0 0 4px;
         }
-        #search-button, #geolocation-button {
+        #search-button, #geolocation-button, #unit-toggle, #dark-mode-toggle {
             padding: 10px 20px;
             font-size: 16px;
-            background-color: #4CAF50;
-            color: white;
+            background-color: var(--button-bg);
+            color: var(--button-text);
             border: none;
             cursor: pointer;
             transition: background-color 0.3s;
@@ -44,15 +62,15 @@
         #search-button {
             border-radius: 0 4px 4px 0;
         }
-        #geolocation-button {
+        #geolocation-button, #unit-toggle, #dark-mode-toggle {
             border-radius: 4px;
             margin-left: 10px;
         }
-        #search-button:hover, #geolocation-button:hover {
+        #search-button:hover, #geolocation-button:hover, #unit-toggle:hover, #dark-mode-toggle:hover {
             background-color: #45a049;
         }
-        #weather-info, #forecast {
-            background-color: white;
+        #weather-info, #forecast, #map {
+            background-color: var(--card-bg);
             border-radius: 5px;
             padding: 20px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
@@ -61,10 +79,13 @@
         .weather-details {
             display: flex;
             justify-content: space-between;
+            flex-wrap: wrap;
             margin-top: 20px;
         }
         .weather-details div {
             text-align: center;
+            flex-basis: calc(33.33% - 10px);
+            margin-bottom: 10px;
         }
         #forecast-container {
             display: flex;
@@ -74,7 +95,7 @@
         .forecast-day {
             flex-basis: calc(20% - 10px);
             text-align: center;
-            background-color: #f9f9f9;
+            background-color: rgba(249, 249, 249, 0.1);
             border-radius: 5px;
             padding: 10px;
             margin-bottom: 10px;
@@ -93,6 +114,28 @@
             font-style: italic;
             color: #666;
         }
+        #map {
+            height: 300px;
+        }
+        @media (max-width: 768px) {
+            #city-input {
+                width: 100%;
+                border-radius: 4px;
+            }
+            #search-button {
+                width: 100%;
+                border-radius: 4px;
+                margin-top: 10px;
+            }
+            #geolocation-button, #unit-toggle, #dark-mode-toggle {
+                width: calc(50% - 5px);
+                margin-left: 0;
+                margin-top: 10px;
+            }
+            .weather-details div, .forecast-day {
+                flex-basis: calc(50% - 10px);
+            }
+        }
     </style>
 </head>
 <body>
@@ -102,6 +145,8 @@
             <input type="text" id="city-input" placeholder="Enter city name" required>
             <button type="submit" id="search-button">Search</button>
             <button type="button" id="geolocation-button">Use My Location</button>
+            <button type="button" id="unit-toggle">Switch to °F</button>
+            <button type="button" id="dark-mode-toggle">Toggle Dark Mode</button>
         </form>
         <div id="error-message"></div>
         <div id="weather-info">
@@ -128,12 +173,15 @@
             <h2>5-Day Forecast</h2>
             <div id="forecast-container"></div>
         </div>
+        <div id="map"></div>
     </div>
     <script>
         const apiKey = 'YOUR_API_KEY_HERE'; // Replace with your actual API key
         const searchForm = document.getElementById('search-form');
         const cityInput = document.getElementById('city-input');
         const geolocationButton = document.getElementById('geolocation-button');
+        const unitToggle = document.getElementById('unit-toggle');
+        const darkModeToggle = document.getElementById('dark-mode-toggle');
         const errorMessage = document.getElementById('error-message');
         const cityName = document.getElementById('city-name');
         const weatherIcon = document.getElementById('weather-icon');
@@ -144,11 +192,23 @@
         const pressure = document.getElementById('pressure');
         const forecastContainer = document.getElementById('forecast-container');
 
+        let isMetric = true;
+        let map;
+        let marker;
+
+        // Load last searched city from local storage
+        const lastSearchedCity = localStorage.getItem('lastSearchedCity');
+        if (lastSearchedCity) {
+            cityInput.value = lastSearchedCity;
+            getWeatherData(lastSearchedCity);
+        }
+
         searchForm.addEventListener('submit', function(e) {
             e.preventDefault();
             const city = cityInput.value.trim();
             if (city) {
                 getWeatherData(city);
+                localStorage.setItem('lastSearchedCity', city);
             }
         });
 
@@ -166,6 +226,16 @@
             }
         });
 
+        unitToggle.addEventListener('click', function() {
+            isMetric = !isMetric;
+            unitToggle.textContent = isMetric ? 'Switch to °F' : 'Switch to °C';
+            updateTemperatureDisplay();
+        });
+
+        darkModeToggle.addEventListener('click', function() {
+            document.body.classList.toggle('dark-mode');
+        });
+
         function getWeatherData(city) {
             showLoading();
             const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${apiKey}`;
@@ -178,6 +248,7 @@
             .then(([weatherData, forecastData]) => {
                 displayWeatherData(weatherData);
                 displayForecastData(forecastData);
+                updateMap(weatherData.coord.lat, weatherData.coord.lon);
                 hideLoading();
             })
             .catch(error => {
@@ -199,6 +270,7 @@
             .then(([weatherData, forecastData]) => {
                 displayWeatherData(weatherData);
                 displayForecastData(forecastData);
+                updateMap(lat, lon);
                 hideLoading();
             })
             .catch(error => {
@@ -212,7 +284,7 @@
             cityName.textContent = data.name;
             weatherIcon.src = `http://openweathermap.org/img/wn/${data.weather[0].icon}.png`;
             weatherIcon.alt = data.weather[0].description;
-            temperature.textContent = `Temperature: ${Math.round(data.main.temp)}°C`;
+            temperature.textContent = `Temperature: ${formatTemperature(data.main.temp)}`;
             description.textContent = data.weather[0].description;
             humidity.textContent = `${data.main.humidity}%`;
             windSpeed.textContent = `${data.wind.speed} m/s`;
@@ -228,10 +300,71 @@
                 forecastDay.innerHTML = `
                     <p>${new Date(day.dt * 1000).toLocaleDateString('en-US', {weekday: 'short'})}</p>
                     <img src="http://openweathermap.org/img/wn/${day.weather[0].icon}.png" alt="${day.weather[0].description}" class="weather-icon">
-                    <p>${Math.round(day.main.temp)}°C</p>
+                    <p>${formatTemperature(day.main.temp)}</p>
                 `;
                 forecastContainer.appendChild(forecastDay);
             });
+        }
+
+        function formatTemperature(temp) {
+            if (isMetric) {
+                return `${Math.round(temp)}°C`;
+            } else {
+                return `${Math.round((temp * 9/5) + 32)}°F`;
+            }
+        }
+
+        function updateTemperatureDisplay() {
+            const currentTemp = temperature.textContent.split(': ')[1];
+            const newTemp = formatTemperature(parseFloat(currentTemp));
+            temperature.textContent = `Temperature: ${newTemp}`;
+
+            const forecastDays = document.querySelectorAll('.forecast-day p:last-child');
+            forecastDays.forEach(day => {
+                const temp = parseFloat(day.textContent);
+                day.textContent = formatTemperature(temp);
+            });
+        }
+
+        function updateMap(lat, lon) {
+            if (!map) {
+                map = new ol.Map({
+                    target: 'map',
+                    layers: [
+                        new ol.layer.Tile({
+                            source: new ol.source.OSM()
+                        })
+                    ],
+                    view: new ol.View({
+                        center: ol.proj.fromLonLat([lon, lat]),
+                        zoom: 10
+                    })
+                });
+            } else {
+                map.getView().setCenter(ol.proj.fromLonLat([lon, lat]));
+            }
+
+            if (marker) {
+                map.removeLayer(marker);
+            }
+
+            marker = new ol.layer.Vector({
+                source: new ol.source.Vector({
+                    features: [
+                        new ol.Feature({
+                            geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat]))
+                        })
+                    ]
+                }),
+                style: new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: 6,
+                        fill: new ol.style.Fill({color: 'red'})
+                    })
+                })
+            });
+
+            map.addLayer(marker);
         }
 
         function showError(message) {
